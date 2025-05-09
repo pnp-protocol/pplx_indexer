@@ -1,0 +1,26 @@
+[Unit]
+Description=EVM Market Indexer Service
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/pplx_indexer
+ExecStart=/usr/bin/npm start
+Restart=always
+RestartSec=10
+StandardOutput=syslog
+StandardError=syslog
+SyslogIdentifier=evm-market-indexer
+Environment=NODE_ENV=production
+
+# Ensure clean shutdown with enough time to complete database operations
+TimeoutStopSec=30
+
+# Hardening measures
+ProtectSystem=full
+PrivateTmp=true
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target 

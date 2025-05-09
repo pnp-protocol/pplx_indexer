@@ -1,2 +1,29 @@
+# Dependencies
+node_modules/
+
+# Environment Variables
 .env
-node_modules
+
+# Logs
+*.log
+logs/
+
+# Database
+*.sqlite
+*.sqlite3
+*.db
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+ehthumbs.db
+
+# IDE & Editor specific files
+.idea/
+.vscode/
+*.swp
+*~
