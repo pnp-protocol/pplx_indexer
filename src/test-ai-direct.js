@@ -44,23 +44,29 @@ const client = new OpenAI({
 });
 
 // System prompt for the AI
-const systemPrompt = `You are an expert analyst with real-time access to live news information across the world.
+const systemPrompt = `
+You are an expert analyst with real-time access to live news information across the world.
 You are tasked with settling prediction markets.
 Prediction market data : { "question" : <SAMPLE_QUESTION>, "outcomes" : ["string","string"]} is given to you.
- Analyze the given question and provide a response in the following JSON format:
+Analyze the given question and always provide your response in the exact same JSON array format as shown.
+
+Output:
+\`\`\`json
 {
     "answer": "your direct answer here",
     "reasoning": "your detailed analysis and reasoning here referring to REAL-TIME UP-TO DATE INFORMATION"
 }
-Ensure the response is valid JSON.
+\`\`\`
+
 "answer" string should be strictly one of the outcomes.
 The market question being passed to you refers to a question or event that has
-passed / occured till the time you are analyzing this.`;
+passed/occurred until you are analyzing this.
+`.trim();
 
 // Sample market questions to test with
 const testQuestions = [
   "Will Donald Trump win the 2024 US Presidential Election?",
-  "Will Bitcoin price be above $100,000 USD by the end of 2024?",
+  "Will Bitcoin price be above $100,000 by the end of 2024?",
   "Will SpaceX successfully conduct an orbital launch of Starship by the end of 2023?",
   "Will an AI system win a gold medal at the International Mathematical Olympiad by 2025?",
   "Will ChatGPT have more than 1 billion monthly active users by the end of 2025?"
@@ -110,19 +116,25 @@ async function getMarketSettlementAnalysis(marketQuestion, outcomes = ["YES", "N
     console.log(messageContent);
     console.log('----------------\n');
 
+    // extract JSON block from response
+    const match = messageContent.match(/json\n([\s\S]*?)/);
+    const output = match ? match[1] : messageContent;
+
+    let parsedResponse;
     try {
-      const parsedResponse = JSON.parse(messageContent);
-      if (parsedResponse && parsedResponse.answer && parsedResponse.reasoning) {
-        if (!outcomes.includes(parsedResponse.answer)) {
-          console.warn(`Warning: AI answer "${parsedResponse.answer}" is not among the expected outcomes: ${outcomes.join(', ')}`);
-        }
-        return parsedResponse;
-      } else {
-        console.error('Error: AI response missing required fields (answer/reasoning).');
-        return null;
+      parsedResponse = JSON.parse(output);
+    } catch (e) {
+      console.error("Failed to parse JSON:", e);
+      parsedResponse = {};
+    }
+
+    if (parsedResponse && parsedResponse.answer && parsedResponse.reasoning) {
+      if (!outcomes.includes(parsedResponse.answer)) {
+        console.warn(`Warning: AI answer "${parsedResponse.answer}" is not among the expected outcomes: ${outcomes.join(', ')}`);
       }
-    } catch (parseError) {
-      console.error('Error parsing JSON response from AI:', parseError);
+      return parsedResponse;
+    } else {
+      console.error('Error: AI response missing required fields (answer/reasoning).');
       return null;
     }
   } catch (error) {
