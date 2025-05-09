@@ -99,6 +99,39 @@ async function fetchAndStoreMarketQuestion(conditionId) {
   }
 }
 
+async function fetchAndRecordPreSettledMarketDetails(conditionId) {
+  if (!pnpFactoryContract) throw new Error('Contract not initialized');
+  try {
+    const isAlreadySettled = await pnpFactoryContract.marketSettled(conditionId);
+    if (isAlreadySettled) {
+      logger.info({ conditionId }, "Market found to be already settled on-chain during indexing.");
+      await db.updateMarketSettledOnChain(conditionId, true);
+      await db.setMarketProcessedForSettlement(conditionId); // Mark as processed to avoid AI settlement
+
+      try {
+        // Attempt to get the winning token ID from the public mapping getter
+        const winningTokenIdBigInt = await pnpFactoryContract.winningTokenId(conditionId);
+        const winningTokenIdStr = winningTokenIdBigInt.toString();
+        
+        if (winningTokenIdBigInt !== undefined) { // Assuming 0 could be a valid token ID, check for undefined
+          await db.updateMarketWinningTokenId(conditionId, winningTokenIdStr);
+          logger.info({ conditionId, winningTokenId: winningTokenIdStr }, "Successfully fetched and stored winningTokenId for pre-settled market.");
+        } else {
+          logger.warn({ conditionId }, "Market is settled, but winningTokenId could not be retrieved (returned undefined). It might not be set or getter is not available as expected.");
+        }
+      } catch (error) {
+        logger.warn({ err: error, conditionId }, "Market is settled, but failed to fetch winningTokenId. The contract might not have a public 'winningTokenId(conditionId)' getter or ABI is outdated.");
+        // Even if we can't get winningTokenId, we know it's settled.
+      }
+      return true; // Market was pre-settled
+    }
+    return false; // Market was not pre-settled
+  } catch (error) {
+    logger.error({ err: error, conditionId }, "Error checking or recording pre-settled market details.");
+    return false; // Assume not settled on error to allow normal processing flow
+  }
+}
+
 export async function syncPastMarketCreatedEvents() {
   if (!pnpFactoryContract) throw new Error('Contract not initialized');
 
@@ -117,15 +150,16 @@ export async function syncPastMarketCreatedEvents() {
         logger.info({ conditionId, marketCreator, blockNumber: event.blockNumber }, 'Processing past event');
         await db.addOrUpdateMarket(conditionId, marketCreator);
         
-        // Fetch market details for past events if not already fetched
+        // Check if market was already settled and try to fetch its winningTokenId
+        const wasPreSettled = await fetchAndRecordPreSettledMarketDetails(conditionId);
+
         const market = await db.getMarket(conditionId);
         if (market) {
-          // Fetch end time if needed
+          // Fetch end time if needed (always useful to have)
           if (!market.fetchedEndTime) {
             await fetchAndStoreMarketEndTime(conditionId);
           }
-          
-          // Fetch market question if needed
+          // Fetch market question if needed (always useful to have)
           if (!market.marketQuestion) {
             await fetchAndStoreMarketQuestion(conditionId);
           }
@@ -156,9 +190,20 @@ export function listenForMarketCreatedEvents() {
     );
     try {
       await db.addOrUpdateMarket(conditionId, marketCreator);
-      // Fetch all market details when new market is created
+      
+      // Check if market was already settled and try to fetch its winningTokenId
+      const wasPreSettled = await fetchAndRecordPreSettledMarketDetails(conditionId);
+
+      // Always fetch end time and question for new live events for completeness,
+      // even if pre-settled (though unlikely for a brand new event).
+      // The fetchAndRecordPreSettledMarketDetails would have already updated settlement status and winningTokenId if applicable.
       await fetchAndStoreMarketEndTime(conditionId);
       await fetchAndStoreMarketQuestion(conditionId);
+
+      if (wasPreSettled) {
+        logger.info({ conditionId }, "Live event for a market that was already settled has been fully recorded (including endTime/Question if missing).");
+      }
+
     } catch (error) {
       logger.error({ err: error, conditionId, marketCreator }, 'Error processing PNP_MarketCreated event');
     }
