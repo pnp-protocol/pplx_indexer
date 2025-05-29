@@ -1,6 +1,7 @@
 import OpenAI from 'openai';
 import config from '../config.js';
 import logger from '../utils/logger.js';
+import { storeAIReasoning } from './supabaseService.js';
 
 const client = new OpenAI({
   apiKey: config.PPLX_API_KEY,
@@ -49,9 +50,18 @@ function parseAIResponse(rawResponse) {
  * Asks Perplexity AI to analyze a market question and provide a settlement answer.
  * @param {string} marketQuestion - The question of the market.
  * @param {string[]} outcomes - An array of possible outcomes, e.g., ["YES", "NO"].
+ * @param {string} conditionId - The ID of the market condition.
+ * @param {string} [marketCreationTime] - Optional market creation timestamp.
+ * @param {string} [settlementTime] - Optional settlement timestamp.
  * @returns {Promise<object|null>} A promise that resolves to an object with "answer" and "reasoning", or null if an error occurs.
  */
-export async function getMarketSettlementAnalysis(marketQuestion, outcomes = ["YES", "NO"]) {
+export async function getMarketSettlementAnalysis(
+  marketQuestion, 
+  outcomes = ["YES", "NO"],
+  conditionId,
+  marketCreationTime,
+  settlementTime
+) {
   const userMessageContent = JSON.stringify({ question: marketQuestion, outcomes });
 
   logger.info({ marketQuestion, outcomes }, 'Sending request to Perplexity AI for market settlement analysis.');
@@ -84,6 +94,21 @@ export async function getMarketSettlementAnalysis(marketQuestion, outcomes = ["Y
           logger.warn({ parsedResponse, outcomes }, 'AI answer is not among the expected outcomes.');
           // Optionally, you could add logic here to retry or default
         }
+        
+        // Store the reasoning in Supabase
+        if (conditionId) {
+          await storeAIReasoning(
+            conditionId,
+            marketQuestion,
+            parsedResponse.answer,
+            parsedResponse.reasoning,
+            marketCreationTime,
+            settlementTime
+          );
+        } else {
+          logger.warn('No conditionId provided, skipping Supabase storage');
+        }
+        
         return parsedResponse;
       } else {
         logger.error({ parsedResponse }, 'AI response missing required fields (answer/reasoning).');

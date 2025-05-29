@@ -382,7 +382,17 @@ async function executeSettlementLogic(conditionId, marketQuestion, marketEndTime
   }, 'Market data for settlement processing using AI.');
 
   const outcomes = ["YES", "NO"];
-  const aiAnalysis = await getMarketSettlementAnalysis(marketQuestion, outcomes);
+  const marketCreationTime = new Date().toISOString(); // You might want to get this from the market data
+  const settlementTime = new Date().toISOString();
+  
+  // Pass conditionId and timestamps to the AI service
+  const aiAnalysis = await getMarketSettlementAnalysis(
+    marketQuestion, 
+    outcomes,
+    conditionId,
+    marketCreationTime,
+    settlementTime
+  );
 
   if (aiAnalysis && aiAnalysis.answer) {
     let winningTokenIdBigInt; // Keep as BigInt for contract call
@@ -403,6 +413,19 @@ async function executeSettlementLogic(conditionId, marketQuestion, marketEndTime
     }, 'AI analysis complete, proceeding to on-chain settlement.');
 
     try {
+      // Double-check that the market isn't already settled before attempting to settle
+      // This helps avoid unnecessary transaction costs and errors
+      const isAlreadySettled = await pnpFactoryContract.marketSettled(conditionId);
+      if (isAlreadySettled) {
+        logger.info({ conditionId }, 'Market is already settled on-chain (caught during settlement attempt).');
+        return { 
+          success: true, 
+          message: 'Market is already settled on-chain', 
+          alreadySettled: true,
+          aiAnswer: aiAnalysis.answer
+        };
+      }
+
       // Create settler wallet and contract instance
       if (!config.SETTLER_PRIVATE_KEY) {
         logger.error('SETTLER_PRIVATE_KEY is not configured in .env. Cannot settle market.');
