@@ -1,6 +1,7 @@
 import OpenAI from 'openai';
 import config from '../config.js';
 import logger from '../utils/logger.js';
+import { storeAIReasoning } from './supabaseService.js';
 
 const client = new OpenAI({
   apiKey: config.PPLX_API_KEY,
@@ -18,7 +19,13 @@ Prediction market data : { "question" : <SAMPLE QUESTION>, "outcomes" : ["string
 Ensure the response is valid JSON.
 "answer" string should be strictly one of the outcomes.
 The market question being passed to you refers to a question or event that has
-passed / occured till the time you are analyzing this.`;
+passed / occured till the time you are analyzing this.
+
+IMPORTANT: If the question is ambiguous, unclear, unanswerable, or you cannot determine a definitive answer based on available information, you MUST set the "answer" field to null (without quotes) and explain in the "reasoning" field why the question cannot be answered definitively. For example:
+{
+    "answer": null,
+    "reasoning": "The question is ambiguous because [specific reason]. Without clearer criteria or more specific information, a definitive answer cannot be determined."
+}`;
 
 /**
  * Cleans and parses the AI response which might be in markdown format
@@ -49,9 +56,18 @@ function parseAIResponse(rawResponse) {
  * Asks Perplexity AI to analyze a market question and provide a settlement answer.
  * @param {string} marketQuestion - The question of the market.
  * @param {string[]} outcomes - An array of possible outcomes, e.g., ["YES", "NO"].
+ * @param {string} conditionId - The ID of the market condition.
+ * @param {string} [marketCreationTime] - Optional market creation timestamp.
+ * @param {string} [settlementTime] - Optional settlement timestamp.
  * @returns {Promise<object|null>} A promise that resolves to an object with "answer" and "reasoning", or null if an error occurs.
  */
-export async function getMarketSettlementAnalysis(marketQuestion, outcomes = ["YES", "NO"]) {
+export async function getMarketSettlementAnalysis(
+  marketQuestion, 
+  outcomes = ["YES", "NO"],
+  conditionId,
+  marketCreationTime,
+  settlementTime
+) {
   const userMessageContent = JSON.stringify({ question: marketQuestion, outcomes });
 
   logger.info({ marketQuestion, outcomes }, 'Sending request to Perplexity AI for market settlement analysis.');
@@ -79,16 +95,98 @@ export async function getMarketSettlementAnalysis(marketQuestion, outcomes = ["Y
       // Parse response with markdown handling
       const parsedResponse = parseAIResponse(messageContent);
       
-      if (parsedResponse && parsedResponse.answer && parsedResponse.reasoning) {
-        if (!outcomes.includes(parsedResponse.answer)) {
-          logger.warn({ parsedResponse, outcomes }, 'AI answer is not among the expected outcomes.');
-          // Optionally, you could add logic here to retry or default
+      if (parsedResponse && parsedResponse.reasoning) {
+        // Case 1: AI explicitly returned null for ambiguous/unanswerable questions
+        if (parsedResponse.answer === null) {
+          logger.warn({ 
+            parsedResponse, 
+            marketQuestion,
+            conditionId 
+          }, 'AI determined the question is ambiguous or unanswerable. Auto-settling as NO.');
+          
+          // Console log for visibility
+          console.log('\n⚠️  AMBIGUOUS QUESTION DETECTED ⚠️');
+          console.log(`Market Question: ${marketQuestion}`);
+          console.log(`Condition ID: ${conditionId}`);
+          console.log(`AI Reasoning: ${parsedResponse.reasoning}`);
+          console.log('🔄 Auto-settling as "NO" due to ambiguity');
+          console.log('----------------------------------------\n');
+          
+          // Create modified response with "NO" answer but preserve original reasoning
+          const modifiedResponse = {
+            answer: "NO",
+            reasoning: `[AUTO-SETTLED AS NO] Original AI Assessment: ${parsedResponse.reasoning}`
+          };
+          
+          // Store the reasoning in Supabase with "NO" as answer
+          if (conditionId) {
+            try {
+              await storeAIReasoning(
+                conditionId,
+                marketQuestion,
+                'NO',
+                modifiedResponse.reasoning,
+                marketCreationTime,
+                settlementTime
+              );
+              logger.info({ conditionId }, 'Successfully stored ambiguous question reasoning in Supabase');
+            } catch (supabaseError) {
+              logger.error({ 
+                err: supabaseError, 
+                conditionId, 
+                marketQuestion: marketQuestion.substring(0, 50) + '...',
+                reasoning: modifiedResponse.reasoning.substring(0, 100) + '...'
+              }, 'Failed to store ambiguous question reasoning in Supabase');
+            }
+          }
+          
+          return modifiedResponse; // Return "NO" answer to proceed with settlement
         }
-        return parsedResponse;
-      } else {
-        logger.error({ parsedResponse }, 'AI response missing required fields (answer/reasoning).');
-        return null;
+        
+        // Case 2: AI provided an answer but it's not in the expected outcomes
+        if (parsedResponse.answer && !outcomes.includes(parsedResponse.answer)) {
+          logger.error({ 
+            parsedResponse, 
+            outcomes, 
+            marketQuestion,
+            conditionId 
+          }, 'AI answer is not among the expected outcomes. Cannot proceed with settlement.');
+          return null;
+        }
+        
+        // Case 3: Valid answer provided - proceed with settlement
+        if (parsedResponse.answer) {
+          // Store the reasoning in Supabase
+          if (conditionId) {
+            try {
+              await storeAIReasoning(
+                conditionId,
+                marketQuestion,
+                parsedResponse.answer,
+                parsedResponse.reasoning,
+                marketCreationTime,
+                settlementTime
+              );
+              logger.info({ conditionId }, 'Successfully stored AI reasoning in Supabase');
+            } catch (supabaseError) {
+              logger.error({ 
+                err: supabaseError, 
+                conditionId, 
+                marketQuestion: marketQuestion.substring(0, 50) + '...',
+                answer: parsedResponse.answer
+              }, 'Failed to store AI reasoning in Supabase');
+            }
+          } else {
+            logger.warn('No conditionId provided, skipping Supabase storage');
+          }
+          
+          return parsedResponse;
+        }
       }
+      
+      // If we reach here, the response is invalid
+      logger.error({ parsedResponse }, 'AI response missing required fields or invalid format.');
+      return null;
     } else {
       logger.error('Perplexity AI response content is empty.');
       return null;

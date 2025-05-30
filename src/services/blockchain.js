@@ -139,12 +139,73 @@ export async function syncPastMarketCreatedEvents() {
   logger.info(`Starting sync of past PNP_MarketCreated events from block ${startBlock}...`);
 
   try {
+    // Get the current block number
+    const currentBlock = await provider.getBlockNumber();
+    logger.info(`Current block: ${currentBlock}, Start block: ${startBlock}`);
+
+    // Calculate total blocks to query
+    const totalBlocks = currentBlock - startBlock;
+    if (totalBlocks <= 0) {
+      logger.info('No blocks to query for past events.');
+      return;
+    }
+
+    // Batch size - use 450 to be safe under Alchemy's 500 block limit
+    const BATCH_SIZE = config.EVENT_QUERY_BATCH_SIZE;
     const eventFilter = pnpFactoryContract.filters.PNP_MarketCreated();
-    const events = await pnpFactoryContract.queryFilter(eventFilter, startBlock, 'latest');
+    let allEvents = [];
 
-    logger.info(`Found ${events.length} past PNP_MarketCreated events.`);
+    // Query events in batches
+    for (let fromBlock = startBlock; fromBlock <= currentBlock; fromBlock += BATCH_SIZE) {
+      const toBlock = Math.min(fromBlock + BATCH_SIZE - 1, currentBlock);
+      
+      logger.info(`Querying events from block ${fromBlock} to ${toBlock}...`);
+      
+      try {
+        const batchEvents = await pnpFactoryContract.queryFilter(eventFilter, fromBlock, toBlock);
+        allEvents = allEvents.concat(batchEvents);
+        logger.info(`Found ${batchEvents.length} events in batch (blocks ${fromBlock}-${toBlock})`);
+        
+        // Add a small delay between batches to avoid rate limiting
+        if (toBlock < currentBlock) {
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+      } catch (batchError) {
+        logger.error({ 
+          err: batchError, 
+          fromBlock, 
+          toBlock 
+        }, `Error querying events for batch ${fromBlock}-${toBlock}`);
+        
+        // If this batch fails, try smaller chunks
+        if (toBlock - fromBlock > 100) {
+          logger.info(`Retrying batch ${fromBlock}-${toBlock} with smaller chunks...`);
+          const smallChunkSize = 100;
+          for (let chunkStart = fromBlock; chunkStart <= toBlock; chunkStart += smallChunkSize) {
+            const chunkEnd = Math.min(chunkStart + smallChunkSize - 1, toBlock);
+            try {
+              const chunkEvents = await pnpFactoryContract.queryFilter(eventFilter, chunkStart, chunkEnd);
+              allEvents = allEvents.concat(chunkEvents);
+              logger.info(`Found ${chunkEvents.length} events in chunk (blocks ${chunkStart}-${chunkEnd})`);
+              await new Promise(resolve => setTimeout(resolve, 50));
+            } catch (chunkError) {
+              logger.error({ 
+                err: chunkError, 
+                chunkStart, 
+                chunkEnd 
+              }, `Error querying events for chunk ${chunkStart}-${chunkEnd}, skipping...`);
+            }
+          }
+        } else {
+          logger.error(`Skipping batch ${fromBlock}-${toBlock} due to error`);
+        }
+      }
+    }
 
-    for (const event of events) {
+    logger.info(`Found ${allEvents.length} total past PNP_MarketCreated events.`);
+
+    // Process all events
+    for (const event of allEvents) {
       if (event.args && event.args.conditionId && event.args.marketCreator) {
         const { conditionId, marketCreator } = event.args;
         logger.info({ conditionId, marketCreator, blockNumber: event.blockNumber }, 'Processing past event');
@@ -382,7 +443,17 @@ async function executeSettlementLogic(conditionId, marketQuestion, marketEndTime
   }, 'Market data for settlement processing using AI.');
 
   const outcomes = ["YES", "NO"];
-  const aiAnalysis = await getMarketSettlementAnalysis(marketQuestion, outcomes);
+  const marketCreationTime = new Date().toISOString(); // You might want to get this from the market data
+  const settlementTime = new Date().toISOString();
+  
+  // Pass conditionId and timestamps to the AI service
+  const aiAnalysis = await getMarketSettlementAnalysis(
+    marketQuestion, 
+    outcomes,
+    conditionId,
+    marketCreationTime,
+    settlementTime
+  );
 
   if (aiAnalysis && aiAnalysis.answer) {
     let winningTokenIdBigInt; // Keep as BigInt for contract call
@@ -403,6 +474,19 @@ async function executeSettlementLogic(conditionId, marketQuestion, marketEndTime
     }, 'AI analysis complete, proceeding to on-chain settlement.');
 
     try {
+      // Double-check that the market isn't already settled before attempting to settle
+      // This helps avoid unnecessary transaction costs and errors
+      const isAlreadySettled = await pnpFactoryContract.marketSettled(conditionId);
+      if (isAlreadySettled) {
+        logger.info({ conditionId }, 'Market is already settled on-chain (caught during settlement attempt).');
+        return { 
+          success: true, 
+          message: 'Market is already settled on-chain', 
+          alreadySettled: true,
+          aiAnswer: aiAnalysis.answer
+        };
+      }
+
       // Create settler wallet and contract instance
       if (!config.SETTLER_PRIVATE_KEY) {
         logger.error('SETTLER_PRIVATE_KEY is not configured in .env. Cannot settle market.');

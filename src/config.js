@@ -46,9 +46,15 @@ const config = {
     return this.SETTLEMENT_DELAY_MINUTES * 60 * 1000;
   },
   START_BLOCK: process.env.START_BLOCK ? parseInt(process.env.START_BLOCK, 10) : 0,
+  EVENT_QUERY_BATCH_SIZE: parseInt(process.env.EVENT_QUERY_BATCH_SIZE || '450', 10),
   MARKET_PROCESSOR_CRON_SCHEDULE: process.env.MARKET_PROCESSOR_CRON_SCHEDULE || '*/1 * * * *',
   DB_FILE_PATH: process.env.DB_FILE_PATH || './data/market_data.sqlite3',
   DB_BACKUP_INTERVAL_HOURS: parseInt(process.env.DB_BACKUP_INTERVAL_HOURS || '6', 10),
+  
+  // Supabase Configuration
+  SUPABASE_URL: process.env.SUPABASE_URL,
+  SUPABASE_ANON_KEY: process.env.SUPABASE_ANON_KEY,
+  SUPABASE_TABLE_NAME: process.env.SUPABASE_TABLE_NAME || 'market_ai_reasoning',
 };
 
 // Validate essential configurations
