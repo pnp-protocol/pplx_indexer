@@ -65,8 +65,8 @@ async function main() {
 
     // 2. Sync past events (if START_BLOCK is configured or from beginning)
     // This is crucial for resilience and to catch up on missed events if the script was down.
-    await syncPastMarketCreatedEvents();
-    logger.info('Finished syncing past market events.');
+    // await syncPastMarketCreatedEvents(); // DISABLED: Skip fetching previous markets
+    logger.info('Skipped syncing past market events (disabled).');
 
     // Log all stored market questions after initial sync
     try {

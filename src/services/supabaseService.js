@@ -71,8 +71,13 @@ export async function storeAIReasoning(conditionId, question, answer, reasoning,
   } catch (error) {
     logger.error({ 
       error: error.message,
+      errorCode: error.code,
+      errorDetails: error.details,
+      errorHint: error.hint,
       conditionId,
-      questionPreview: question?.substring(0, 50) + (question?.length > 50 ? '...' : '')
+      questionPreview: question?.substring(0, 50) + (question?.length > 50 ? '...' : ''),
+      answer,
+      reasoningPreview: reasoning?.substring(0, 100) + (reasoning?.length > 100 ? '...' : '')
     }, 'Failed to store AI reasoning in Supabase');
     return null;
   }
