@@ -1,7 +1,7 @@
 import OpenAI from 'openai';
 import config from '../config.js';
 import logger from '../utils/logger.js';
-import { storeAIReasoning } from './supabaseService.js';
+import { storeAIReasoning, storeAIResolution } from './supabaseService.js';
 
 const client = new OpenAI({
   apiKey: config.PPLX_API_KEY,
@@ -26,6 +26,24 @@ IMPORTANT: If the question is ambiguous, unclear, unanswerable, or you cannot de
     "answer": null,
     "reasoning": "The question is ambiguous because [specific reason]. Without clearer criteria or more specific information, a definitive answer cannot be determined."
 }`;
+
+const resolutionSystemPrompt = `You are an expert analyst tasked with evaluating the resolvability of a prediction market question and defining how it can be settled objectively, encouraging creative and speculative questions. You will be given a market question and its end time in ISO format. Your task is to:
+
+1. Determine if the question is well-posed, unambiguous, and resolvable by an AI at the specified end time, assuming the event could occur. Focus strictly on whether a definitive, objective outcome (e.g., yes/no for binary markets, a specific value for scalar markets) can be verified using reliable, publicly accessible sources, regardless of the event's current likelihood or feasibility.
+2. Define the specific criteria or conditions for settling the question, including what constitutes a definitive outcome (e.g., what qualifies as 'yes' or 'no' for binary markets, or the measurable metric for scalar markets).
+3. Identify any ambiguities or challenges in resolving the question and suggest improvements to make it clearer, if applicable.
+
+Provide a response in the following JSON format:
+{
+    "resolvable": boolean,
+    "reasoning": "Explain why the question is or is not resolvable by the end time. Focus on whether a clear, objective outcome can be verified using reliable sources, not on the likelihood of the event occurring. If not resolvable, identify specific ambiguities or lack of verifiable sources and explain why they prevent resolution.",
+    "settlement_criteria": "Describe the specific conditions, metrics, or events that must occur to settle the question definitively (e.g., 'An official U.S. government announcement confirming the event', 'A recorded measurement from a specific weather station'). Specify the outcome format (e.g., binary: yes/no, scalar: numerical value).",
+    "resolution_sources": ["List specific, reliable, and publicly accessible data sources to verify the outcome at the market's end time (e.g., 'Official U.S. government press releases', 'NASA's official website', 'NOAA API for weather data'). Avoid vague sources like 'news reports' unless a specific outlet or account is named."],
+    "suggested_improvements": "If the question is ambiguous or difficult to resolve, provide actionable suggestions to rephrase or clarify it (e.g., 'Specify the exact location for weather-related questions', 'Define the criteria for the event'). If no improvements are needed, state 'None'."
+}
+
+Ensure the response is a valid JSON object. Do not assess the likelihood or feasibility of the event occurring. Assume the event is possible and evaluate only whether a definitive outcome can be objectively verified at the end time using reliable sources. The same AI system will use the provided sources and criteria to settle the market later.`;
+
 
 /**
  * Cleans and parses the AI response which might be in markdown format
@@ -193,6 +211,70 @@ export async function getMarketSettlementAnalysis(
     }
   } catch (error) {
     logger.error({ err: error }, 'Error calling Perplexity AI API');
+    if (error.response) {
+      logger.error('Error details from AI API:', error.response.data);
+    }
+    return null;
+  }
+}
+
+export async function getMarketResolution(marketQuestion, marketEndTime, conditionId) {
+  const endTimeISO = new Date(marketEndTime * 1000).toISOString();
+  const userMessageContent = JSON.stringify({
+    question: marketQuestion,
+    endTime: endTimeISO,
+  });
+
+  logger.info({ marketQuestion, endTimeISO }, 'Sending request to Perplexity AI for market resolution analysis.');
+
+  try {
+    const response = await client.chat.completions.create({
+      model: 'sonar',
+      messages: [
+        {
+          role: 'system',
+          content: resolutionSystemPrompt,
+        },
+        {
+          role: 'user',
+          content: userMessageContent,
+        },
+      ],
+      temperature: 0.2,
+    });
+
+    const messageContent = response.choices[0].message.content;
+    logger.info({ response: messageContent }, 'Received market resolution analysis from Perplexity AI.');
+
+    if (messageContent) {
+      const parsedResponse = parseAIResponse(messageContent);
+      if (parsedResponse) {
+        console.log('\\n✅ MARKET RESOLUTION ANALYSIS ✅');
+        console.log(`Market Question: ${marketQuestion}`);
+        console.log(`Resolvable: ${parsedResponse.resolvable}`);
+        console.log(`Reasoning: ${parsedResponse.reasoning}`);
+        console.log(`Settlement Criteria: ${parsedResponse.settlement_criteria}`);
+        console.log(`Resolution Sources: ${JSON.stringify(parsedResponse.resolution_sources, null, 2)}`);
+        console.log(`Suggested Improvements: ${parsedResponse.suggested_improvements}`);
+        console.log('----------------------------------------\\n');
+
+        // Store the result in Supabase using the new function
+        if (conditionId) {
+          await storeAIResolution(
+            conditionId,
+            marketQuestion,
+            parsedResponse
+          );
+        } else {
+          logger.warn('No conditionId provided to getMarketResolution, skipping Supabase storage.');
+        }
+
+        return parsedResponse;
+      }
+    }
+    return null;
+  } catch (error) {
+    logger.error({ err: error, 'function': 'getMarketResolution' }, 'Error calling Perplexity AI API');
     if (error.response) {
       logger.error('Error details from AI API:', error.response.data);
     }

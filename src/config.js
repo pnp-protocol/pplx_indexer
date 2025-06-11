@@ -55,6 +55,7 @@ const config = {
   SUPABASE_URL: process.env.SUPABASE_URL,
   SUPABASE_ANON_KEY: process.env.SUPABASE_ANON_KEY,
   SUPABASE_TABLE_NAME: process.env.SUPABASE_TABLE_NAME || 'market_ai_reasoning',
+  SUPABASE_TABLE_NAME_RESOLUTION: process.env.SUPABASE_TABLE_NAME_RESOLUTION || 'market_ai_resolution',
 };
 
 // Validate essential configurations

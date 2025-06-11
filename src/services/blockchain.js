@@ -5,7 +5,7 @@ import { fileURLToPath } from 'url';
 import config from '../config.js';
 import logger from '../utils/logger.js';
 import * as db from './database.js';
-import { getMarketSettlementAnalysis } from './aiService.js'; // Import the AI service
+import { getMarketSettlementAnalysis, getMarketResolution } from './aiService.js'; // Import the AI service and the new function
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -255,11 +255,16 @@ export function listenForMarketCreatedEvents() {
       // Check if market was already settled and try to fetch its winningTokenId
       const wasPreSettled = await fetchAndRecordPreSettledMarketDetails(conditionId);
 
-      // Always fetch end time and question for new live events for completeness,
+      // Fetch end time and question for new live events for completeness,
       // even if pre-settled (though unlikely for a brand new event).
-      // The fetchAndRecordPreSettledMarketDetails would have already updated settlement status and winningTokenId if applicable.
-      await fetchAndStoreMarketEndTime(conditionId);
-      await fetchAndStoreMarketQuestion(conditionId);
+      const endTime = await fetchAndStoreMarketEndTime(conditionId);
+      const question = await fetchAndStoreMarketQuestion(conditionId);
+
+      // Get market resolution analysis
+      if (question && endTime && endTime > 0) {
+        logger.info({ conditionId }, 'Fetching market resolution analysis from AI.');
+        await getMarketResolution(question, endTime, conditionId);
+      }
 
       if (wasPreSettled) {
         logger.info({ conditionId }, "Live event for a market that was already settled has been fully recorded (including endTime/Question if missing).");
