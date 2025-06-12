@@ -1,0 +1,32 @@
+{
+  "timestamp": "2025-06-11T13:23:45.256Z",
+  "total_processed": 2,
+  "successful": 2,
+  "failed": 0,
+  "resolvable_count": 2,
+  "unresolvable_count": 0,
+  "results": [
+    {
+      "conditionId": "0x207d91b900fff61502bc01f798de519adb1ac5a49ba3d7c319fad5a11d049d37",
+      "question": "Will ETH reach a new All Time High in 2025?",
+      "marketEndTime": "2025-12-27T17:22:50.000Z",
+      "isSettled": false,
+      "success": true,
+      "error": null,
+      "resolvable": true,
+      "reasoning": "The question is resolvable because it involves a clear, binary outcome (yes/no) that can be verified using publicly accessible financial data sources. Ethereum's price history and current price can be...",
+      "timestamp": "2025-06-11T13:23:33.686Z"
+    },
+    {
+      "conditionId": "0xcc0979384c941f2a5eaa599abc0c782390ffd8a6ba40f3f24dc05e1871cdc21b",
+      "question": "Will Ben Pasternak give a shoutout to PNP Exchange once the Solana mainnet and the audits are comple...",
+      "marketEndTime": "2025-06-12T18:40:04.000Z",
+      "isSettled": false,
+      "success": true,
+      "error": null,
+      "resolvable": true,
+      "reasoning": "The question is well-posed and unambiguous, as it asks whether Ben Pasternak will give a shoutout to PNP Exchange once the Solana mainnet and the audits are completed. This is a binary outcome (yes/no...",
+      "timestamp": "2025-06-11T13:23:45.255Z"
+    }
+  ]
+}
